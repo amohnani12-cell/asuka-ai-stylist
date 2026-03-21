@@ -7,34 +7,44 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function generateDesignImage(prompt) {
   const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) return null;
+  if (!token) { console.error("No REPLICATE_API_TOKEN"); return null; }
 
   try {
     const enhanced = `professional Indian menswear fashion photography, studio lighting, male model wearing ${prompt}, luxury fashion catalog, clean cream studio background, photorealistic, high detail, 4k, editorial fashion`;
 
-    const res = await fetch("https://api.replicate.com/v1/predictions", {
+    // Use the model-specific predictions endpoint (correct format)
+    const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "wait" },
       body: JSON.stringify({
-        model: "black-forest-labs/flux-schnell",
         input: { prompt: enhanced, num_outputs: 1, aspect_ratio: "3:4", output_format: "webp", output_quality: 90 },
       }),
     });
 
-    if (!res.ok) { console.error("Replicate create error:", await res.text()); return null; }
-    let pred = await res.json();
-
-    // Poll for completion (max 30s)
-    for (let i = 0; i < 30; i++) {
-      if (pred.status === "succeeded") return pred.output?.[0] || null;
-      if (pred.status === "failed" || pred.status === "canceled") return null;
-      await new Promise(r => setTimeout(r, 1000));
-      const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
-      pred = await poll.json();
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("Replicate error:", res.status, errText);
+      return null;
     }
-    return pred.output?.[0] || null;
+
+    const pred = await res.json();
+
+    // If "Prefer: wait" worked, output is already here
+    if (pred.output?.[0]) return pred.output[0];
+
+    // Otherwise poll
+    if (pred.urls?.get) {
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
+        const p = await poll.json();
+        if (p.status === "succeeded") return p.output?.[0] || null;
+        if (p.status === "failed" || p.status === "canceled") { console.error("Replicate failed:", p.error); return null; }
+      }
+    }
+    return null;
   } catch (err) {
-    console.error("Replicate error:", err);
+    console.error("Replicate exception:", err.message);
     return null;
   }
 }
@@ -49,8 +59,9 @@ async function executeTool(name, input) {
         if (saleItems.length) text += ` ${saleItems.length} item(s) currently on sale!`;
         return { type: "products", data: products, text };
       } catch (err) {
-        console.error("Shopify error:", err);
-        return { type: "error", text: "Could not search products right now." };
+        console.error("Shopify error:", err.message);
+        // Return empty rather than crashing
+        return { type: "products", data: [], text: "Could not search products right now. The customer can browse asukacouture.com directly." };
       }
     }
     case "generate_design_brief": {
@@ -58,14 +69,17 @@ async function executeTool(name, input) {
       return {
         type: "design_brief",
         data: {
-          ...input,
+          occasion: input.occasion || "",
+          garment_type: input.garment_type || "",
+          color_palette: input.color_palette || "",
           fabric: input.fabric || "Not specified",
           embroidery_detail: input.embroidery_detail || "Not specified",
           silhouette: input.silhouette || "Not specified",
           additional_notes: input.additional_notes || "",
+          image_prompt: input.image_prompt || "",
           image_url: imageUrl,
         },
-        text: imageUrl ? "Design brief created with AI visualization." : "Design brief created (image generation unavailable).",
+        text: imageUrl ? "Design created with AI-generated visualization." : "Design brief created. Image generation is temporarily unavailable.",
       };
     }
     case "get_store_info": {
@@ -91,8 +105,8 @@ export async function POST(request) {
     }));
 
     const modeCtx = mode === "design"
-      ? "\n\nDESIGN MODE. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt describing the garment on a male model — fabric, embroidery, color, fit, accessories."
-      : "\n\nSTYLE ME MODE. Use search_products for matching items. Highlight discounts. Use **bold** for product names.";
+      ? "\n\nDESIGN MODE. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt describing the garment on a male model — fabric, embroidery, color, fit, accessories. Be vivid and specific."
+      : "\n\nSTYLE ME MODE. Use search_products for matching items. If products are returned, describe them with styling tips. Highlight discounts. Use **bold** for product names. If search fails, still give helpful style advice.";
 
     let response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
@@ -131,7 +145,7 @@ export async function POST(request) {
     }
     return NextResponse.json(res);
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error("Chat API error:", error.message);
     return NextResponse.json({ reply: "I'm having a moment — could you try that again?", products: [], design: null, error: error.message }, { status: 500 });
   }
 }
