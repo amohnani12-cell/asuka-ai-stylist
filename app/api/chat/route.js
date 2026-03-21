@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { searchProducts, getCollection } from "@/lib/shopify";
+import { searchProducts } from "@/lib/shopify";
 import { STYLIST_SYSTEM_PROMPT, TOOLS, STORE_INFO } from "@/lib/prompts";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+/**
+ * Generate a design image URL using Pollinations.ai (free, no API key needed)
+ */
+function generateDesignImageUrl(imagePrompt) {
+  const enhancedPrompt = `professional fashion photography, studio lighting, ${imagePrompt}, high-end menswear catalog photo, clean white background, photorealistic, 4k, detailed fabric texture`;
+  const encoded = encodeURIComponent(enhancedPrompt);
+  return `https://image.pollinations.ai/prompt/${encoded}?width=512&height=640&nologo=true&seed=${Date.now()}`;
+}
 
 /**
  * Handle tool calls from Claude
@@ -21,6 +30,7 @@ async function executeTool(name, input) {
             : `No products found for "${input.query}". Try a different description.`,
         };
       } catch (err) {
+        console.error("Shopify search error:", err);
         return {
           type: "error",
           text: `Could not search products right now. Let me help you differently.`,
@@ -29,6 +39,7 @@ async function executeTool(name, input) {
     }
 
     case "generate_design_brief": {
+      const imageUrl = generateDesignImageUrl(input.image_prompt);
       return {
         type: "design_brief",
         data: {
@@ -40,8 +51,9 @@ async function executeTool(name, input) {
           silhouette: input.silhouette || "Not specified",
           additional_notes: input.additional_notes || "",
           image_prompt: input.image_prompt,
+          image_url: imageUrl,
         },
-        text: "Design brief created successfully.",
+        text: "Design brief created with AI-generated visualization.",
       };
     }
 
@@ -64,7 +76,6 @@ async function executeTool(name, input) {
 
 /**
  * POST /api/chat
- * Main conversational endpoint
  */
 export async function POST(request) {
   try {
@@ -74,19 +85,16 @@ export async function POST(request) {
       return NextResponse.json({ error: "Messages array required" }, { status: 400 });
     }
 
-    // Format messages for Claude
     const claudeMessages = messages.map((m) => ({
       role: m.role === "bot" ? "assistant" : m.role,
       content: m.text || m.content,
     }));
 
-    // Add mode context to system prompt
     const modeContext =
       mode === "design"
-        ? "\n\nThe customer is in DESIGN MODE. They want to create something custom. Focus on gathering their vision and generating a design brief. Ask about occasion, garment type, colors, fabric, embroidery, and silhouette. Once you have enough detail, use the generate_design_brief tool."
-        : "\n\nThe customer is in STYLE ME MODE. They want to find products from the Asuka collection. Use the search_products tool to find matching items. Show real products with prices.";
+        ? "\n\nThe customer is in DESIGN MODE. They want to create something custom. Focus on gathering their vision and generating a design brief. Ask about occasion, garment type, colors, fabric, embroidery, and silhouette. Once you have enough detail (at least occasion, garment type, and color), use the generate_design_brief tool immediately. Don't keep asking too many questions — 1-2 follow-ups max, then generate. Write the image_prompt field as a very detailed visual description for AI image generation."
+        : "\n\nThe customer is in STYLE ME MODE. They want to find products from the Asuka collection. Use the search_products tool to find matching items. Show real products with prices. Use **bold** for emphasis and product names.";
 
-    // Initial Claude call
     let response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1024,
@@ -95,23 +103,18 @@ export async function POST(request) {
       messages: claudeMessages,
     });
 
-    // Process tool calls in a loop (multi-orchestration)
     const toolResults = [];
     let iterations = 0;
     const MAX_ITERATIONS = 3;
 
     while (response.stop_reason === "tool_use" && iterations < MAX_ITERATIONS) {
       iterations++;
-
-      // Find all tool use blocks
       const toolUseBlocks = response.content.filter((b) => b.type === "tool_use");
-
-      // Execute all tools
       const toolResultMessages = [];
+
       for (const toolUse of toolUseBlocks) {
         const result = await executeTool(toolUse.name, toolUse.input);
         toolResults.push({ tool: toolUse.name, ...result });
-
         toolResultMessages.push({
           type: "tool_result",
           tool_use_id: toolUse.id,
@@ -119,7 +122,6 @@ export async function POST(request) {
         });
       }
 
-      // Continue conversation with tool results
       response = await client.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
@@ -133,11 +135,9 @@ export async function POST(request) {
       });
     }
 
-    // Extract text response
     const textBlocks = response.content.filter((b) => b.type === "text");
     const replyText = textBlocks.map((b) => b.text).join("\n");
 
-    // Build structured response
     const structuredResponse = {
       reply: replyText,
       products: [],
@@ -145,7 +145,6 @@ export async function POST(request) {
       stores: null,
     };
 
-    // Attach tool result data
     for (const result of toolResults) {
       if (result.type === "products" && result.data?.length) {
         structuredResponse.products = result.data;
@@ -173,14 +172,11 @@ export async function POST(request) {
   }
 }
 
-/**
- * Handle CORS preflight
- */
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
     headers: {
-      "Access-Control-Allow-Origin": process.env.SHOPIFY_STORE_URL || "*",
+      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     },
