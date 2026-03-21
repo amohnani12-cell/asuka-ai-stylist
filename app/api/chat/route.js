@@ -5,9 +5,38 @@ import { STYLIST_SYSTEM_PROMPT, TOOLS, STORE_INFO } from "@/lib/prompts";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-function generateDesignImageUrl(prompt) {
-  const enhanced = `professional Indian menswear fashion photography, studio lighting, male model wearing ${prompt}, luxury fashion catalog, clean background, photorealistic, high detail, 4k`;
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(enhanced)}?width=512&height=680&nologo=true&model=flux&seed=${Date.now()}`;
+async function generateDesignImage(prompt) {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) return null;
+
+  try {
+    const enhanced = `professional Indian menswear fashion photography, studio lighting, male model wearing ${prompt}, luxury fashion catalog, clean cream studio background, photorealistic, high detail, 4k, editorial fashion`;
+
+    const res = await fetch("https://api.replicate.com/v1/predictions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "black-forest-labs/flux-schnell",
+        input: { prompt: enhanced, num_outputs: 1, aspect_ratio: "3:4", output_format: "webp", output_quality: 90 },
+      }),
+    });
+
+    if (!res.ok) { console.error("Replicate create error:", await res.text()); return null; }
+    let pred = await res.json();
+
+    // Poll for completion (max 30s)
+    for (let i = 0; i < 30; i++) {
+      if (pred.status === "succeeded") return pred.output?.[0] || null;
+      if (pred.status === "failed" || pred.status === "canceled") return null;
+      await new Promise(r => setTimeout(r, 1000));
+      const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
+      pred = await poll.json();
+    }
+    return pred.output?.[0] || null;
+  } catch (err) {
+    console.error("Replicate error:", err);
+    return null;
+  }
 }
 
 async function executeTool(name, input) {
@@ -16,17 +45,16 @@ async function executeTool(name, input) {
       try {
         const products = await searchProducts(input.query, input.limit || 4);
         const saleItems = products.filter(p => p.onSale);
-        let text = products.length
-          ? `Found ${products.length} products.`
-          : `No products found for "${input.query}".`;
-        if (saleItems.length) text += ` ${saleItems.length} item(s) are currently on sale!`;
+        let text = products.length ? `Found ${products.length} products.` : `No products found for "${input.query}".`;
+        if (saleItems.length) text += ` ${saleItems.length} item(s) currently on sale!`;
         return { type: "products", data: products, text };
       } catch (err) {
         console.error("Shopify error:", err);
-        return { type: "error", text: "Could not search products. Let me help differently." };
+        return { type: "error", text: "Could not search products right now." };
       }
     }
     case "generate_design_brief": {
+      const imageUrl = await generateDesignImage(input.image_prompt);
       return {
         type: "design_brief",
         data: {
@@ -35,9 +63,9 @@ async function executeTool(name, input) {
           embroidery_detail: input.embroidery_detail || "Not specified",
           silhouette: input.silhouette || "Not specified",
           additional_notes: input.additional_notes || "",
-          image_url: generateDesignImageUrl(input.image_prompt),
+          image_url: imageUrl,
         },
-        text: "Design brief created with AI visualization.",
+        text: imageUrl ? "Design brief created with AI visualization." : "Design brief created (image generation unavailable).",
       };
     }
     case "get_store_info": {
@@ -63,8 +91,8 @@ export async function POST(request) {
     }));
 
     const modeCtx = mode === "design"
-      ? "\n\nDESIGN MODE active. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt describing the garment on a male model."
-      : "\n\nSTYLE ME MODE active. Use search_products for matching items. Highlight any discounts. Use **bold** for product names.";
+      ? "\n\nDESIGN MODE. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt describing the garment on a male model — fabric, embroidery, color, fit, accessories."
+      : "\n\nSTYLE ME MODE. Use search_products for matching items. Highlight discounts. Use **bold** for product names.";
 
     let response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
