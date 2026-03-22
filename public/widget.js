@@ -25,11 +25,13 @@
   function md(t){if(!t)return"";return esc(t).replace(/\*\*(.+?)\*\*/g,`<strong style="font-weight:600;color:${TD}">$1</strong>`).replace(/\*(.+?)\*/g,'<em>$1</em>').replace(/\n/g,"<br>")}
   function esc(s){return s?s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}
 
-  /* ─── CLIENT-SIDE PRODUCT SEARCH ─── */
-  async function searchProductsLocal(query, limit) {
-    limit = limit || 4;
+  /* ─── CLIENT-SIDE PRODUCT SEARCH WITH SMART FALLBACKS ─── */
+  const GARMENTS = ["sherwani","kurta bundi","kurta set","kurta","bandhgala","indo western","indo-western","tuxedo","suit","blazer","shirt","co-ord","co ord","jacket","stole","juttis","shoes"];
+  const STOP = ["show","me","for","a","the","in","with","and","or","any","some","options","ideas","want","need","looking","please","can","you","find","get","have","best","good","nice","i","my","would","like","outfit","wear","something","dress"];
+
+  async function doSearch(q, limit) {
     try {
-      const r = await fetch(`/search/suggest.json?q=${encodeURIComponent(query)}&resources[type]=product&resources[limit]=${limit}&resources[options][unavailable_products]=hide`);
+      const r = await fetch(`/search/suggest.json?q=${encodeURIComponent(q)}&resources[type]=product&resources[limit]=${limit}&resources[options][unavailable_products]=hide`);
       if (!r.ok) return [];
       const d = await r.json();
       return (d.resources?.results?.products || []).map(p => {
@@ -37,6 +39,44 @@
         return { title:p.title, handle:p.handle, price:`₹${pr.toLocaleString("en-IN")}`, priceRaw:pr, onSale:sale, discount:sale?Math.round(((cp-pr)/cp)*100):0, compareAtPrice:sale?`₹${cp.toLocaleString("en-IN")}`:null, image:p.image||p.featured_image?.url||null, url:`/products/${p.handle}` };
       });
     } catch(e) { return []; }
+  }
+
+  async function searchProductsLocal(query, limit) {
+    limit = limit || 4;
+    const q = query.toLowerCase().replace(/[?!.,]/g,"").trim();
+
+    // Extract garment type from query
+    let garment = "";
+    for (const g of GARMENTS) { if (q.includes(g)) { garment = g; break; } }
+
+    // Extract meaningful words (remove stop words)
+    const meaningful = q.split(/\s+/).filter(w => w.length > 2 && !STOP.includes(w));
+
+    // Strategy 1: Full meaningful query
+    let results = await doSearch(meaningful.join(" "), limit);
+    if (results.length) return results;
+
+    // Strategy 2: Just garment type + color/fabric words
+    if (garment) {
+      const extras = meaningful.filter(w => w !== garment && !garment.includes(w));
+      if (extras.length) {
+        results = await doSearch(garment + " " + extras[0], limit);
+        if (results.length) return results;
+      }
+      // Strategy 3: Just garment type alone
+      results = await doSearch(garment, limit);
+      if (results.length) return results;
+    }
+
+    // Strategy 4: Try each meaningful word individually
+    for (const w of meaningful) {
+      if (w.length > 3) {
+        results = await doSearch(w, limit);
+        if (results.length) return results;
+      }
+    }
+
+    return [];
   }
 
   function waLink(d) {
