@@ -6,34 +6,66 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function generateDesignImage(prompt) {
   const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) return null;
+  if (!token) { console.error("No REPLICATE_API_TOKEN"); return null; }
   try {
-    const enhanced = `Asuka Couture luxury menswear campaign photograph. A young stylish Indian male model, age 25-30, with a well-groomed short beard, dark hair styled and swept to one side, sharp defined jawline, wearing ${prompt}. The model stands in a confident relaxed pose, one hand casually in pocket or adjusting a cuff, with a composed self-assured expression looking slightly past the camera. PHOTOGRAPHY: Canon EOS R5, 85mm f/1.4 lens, shallow depth of field. Background is a rich dark maroon velvet draped setting with warm amber side lighting creating dramatic shadows that highlight the fabric texture and embroidery craftsmanship. Lighting is cinematic — warm golden key light from upper left, soft bounced fill from right, subtle hair light. The garment fabric shows luxurious texture — visible weave of silk, pile of velvet, shimmer of brocade. Embroidery is crisp and detailed with visible individual stitches of dori, zardozi, or resham work. Full body shot from head to shoes. Style reference: Sabyasachi meets GQ India editorial. Color grading: warm rich tones, deep shadows, golden highlights. 8K resolution, photorealistic.`;
-    const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions", {
+    // Let the customer's prompt do the work — minimal wrapping
+    const enhanced = `${prompt}. Indian menswear, premium quality, studio photograph.`;
+
+    const res = await fetch("https://api.replicate.com/v1/models/google/nano-banana-pro/predictions", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "wait" },
-      body: JSON.stringify({ input: { prompt: enhanced, aspect_ratio: "3:4", output_format: "webp", output_quality: 95, safety_tolerance: 2, prompt_upsampling: true } }),
+      body: JSON.stringify({
+        input: {
+          prompt: enhanced,
+          aspect_ratio: "3:4",
+          output_format: "webp",
+          safety_tolerance: 4,
+          allow_fallback_model: true,
+        },
+      }),
     });
-    if (!res.ok) { console.error("Replicate error:", res.status); return null; }
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("Nano Banana Pro error:", res.status, err);
+      return null;
+    }
+
     const pred = await res.json();
-    // flux-1.1-pro returns output as a string URL, flux-schnell returns an array
+    // Handle different output formats
+    if (pred.output?.images?.[0]?.url) return pred.output.images[0].url;
     if (typeof pred.output === "string") return pred.output;
-    if (Array.isArray(pred.output) && pred.output[0]) return pred.output[0];
+    if (Array.isArray(pred.output) && pred.output[0]) {
+      const first = pred.output[0];
+      return typeof first === "string" ? first : first?.url || null;
+    }
+
+    // Poll if not ready yet
     if (pred.urls?.get) {
       for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 1000));
         const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
         const p = await poll.json();
         if (p.status === "succeeded") {
+          if (p.output?.images?.[0]?.url) return p.output.images[0].url;
           if (typeof p.output === "string") return p.output;
-          if (Array.isArray(p.output) && p.output[0]) return p.output[0];
+          if (Array.isArray(p.output) && p.output[0]) {
+            const first = p.output[0];
+            return typeof first === "string" ? first : first?.url || null;
+          }
           return null;
         }
-        if (p.status === "failed" || p.status === "canceled") return null;
+        if (p.status === "failed" || p.status === "canceled") {
+          console.error("Nano Banana Pro failed:", p.error);
+          return null;
+        }
       }
     }
     return null;
-  } catch (err) { console.error("Replicate error:", err.message); return null; }
+  } catch (err) {
+    console.error("Nano Banana Pro error:", err.message);
+    return null;
+  }
 }
 
 async function executeTool(name, input) {
