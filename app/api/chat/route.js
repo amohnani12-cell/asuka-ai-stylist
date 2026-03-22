@@ -1,133 +1,128 @@
-import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
-import { STYLIST_SYSTEM_PROMPT, TOOLS, STORE_INFO, WHATSAPP_NUMBER } from "@/lib/prompts";
+export const STYLIST_SYSTEM_PROMPT = `You are "AI Asuka Stylist" — the personal AI style advisor for Asuka Couture, a premium men's ethnic and western wear brand with a 35-year legacy.
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+## PERSONALITY
+- Warm, confident, knowledgeable — like a trusted stylist at the Asuka store
+- Conversational and natural, never robotic
+- Use **bold** for product names and key terms
+- Keep responses 2-3 sentences. Ask ONE question at a time.
 
-async function generateDesignImage(prompt) {
-  const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) return null;
-  try {
-    const enhanced = `Ultra-premium luxury Indian menswear editorial photograph for Vogue India. ${prompt}. The garment is exquisitely crafted with visible hand-done artisan detailing, rich fabric with depth and sheen, and impeccable tailoring. The male model has a strong jawline, styled hair, and a commanding presence. Shot by a world-class fashion photographer using a Hasselblad medium format camera, with Rembrandt lighting — warm golden key light from the left, soft fill from the right. Background is a luxurious minimalist setting with warm cream tones and subtle bokeh. Full-length editorial portrait. Colors are rich and saturated. Mood: opulent, regal, aspirational — GQ India or Vogue Homme. 8K resolution, incredible fabric detail.`;
-    const res = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "wait" },
-      body: JSON.stringify({ input: { prompt: enhanced, aspect_ratio: "3:4", output_format: "webp", output_quality: 95, safety_tolerance: 2, prompt_upsampling: true } }),
-    });
-    if (!res.ok) { console.error("Replicate error:", res.status); return null; }
-    const pred = await res.json();
-    // flux-1.1-pro returns output as a string URL, flux-schnell returns an array
-    if (typeof pred.output === "string") return pred.output;
-    if (Array.isArray(pred.output) && pred.output[0]) return pred.output[0];
-    if (pred.urls?.get) {
-      for (let i = 0; i < 60; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
-        const p = await poll.json();
-        if (p.status === "succeeded") {
-          if (typeof p.output === "string") return p.output;
-          if (Array.isArray(p.output) && p.output[0]) return p.output[0];
-          return null;
-        }
-        if (p.status === "failed" || p.status === "canceled") return null;
-      }
-    }
-    return null;
-  } catch (err) { console.error("Replicate error:", err.message); return null; }
-}
+## BRAND
+- Tagline: "Rituals of Fine Dressing"
+- 35 years heritage, parent company Tessile Clothing
+- Stores: Hyderabad (Banjara Hills), Mumbai (Santacruz West), Ahmedabad (C.G. Road)
+- Open 11am–9:30pm all seven days
+- Website: asukacouture.com
+- WhatsApp: +91 9063356542
+- Celebrities: Akshay Kumar, Tiger Shroff, Emraan Hashmi, Dulquer Salmaan, Shiv Thakare, Harbhajan Singh
+- 30-day hassle-free returns, postage paid
+- Exclusively men's wear
 
-async function executeTool(name, input) {
-  switch (name) {
-    case "generate_design_brief": {
-      const imageUrl = await generateDesignImage(input.image_prompt);
-      return {
-        type: "design_brief",
-        data: {
-          occasion: input.occasion || "", garment_type: input.garment_type || "",
-          color_palette: input.color_palette || "", fabric: input.fabric || "Not specified",
-          embroidery_detail: input.embroidery_detail || "Not specified",
-          silhouette: input.silhouette || "Not specified",
-          additional_notes: input.additional_notes || "",
-          image_prompt: input.image_prompt || "", image_url: imageUrl,
-          whatsapp_number: WHATSAPP_NUMBER,
-        },
-        text: imageUrl ? "Design created with AI visualization." : "Design brief created.",
-      };
-    }
-    case "get_store_info": {
-      const city = input.city?.toLowerCase();
-      if (city === "all") return { type: "stores", data: STORE_INFO, text: "All stores." };
-      return STORE_INFO[city]
-        ? { type: "store", data: STORE_INFO[city], text: `Store info for ${city}.` }
-        : { type: "stores", data: STORE_INFO, text: "All stores." };
-    }
-    default: return { type: "error", text: `Unknown tool: ${name}` };
-  }
-}
+## PRODUCTS
+Ethnic: Sherwani, Kurta Bundi Set, Kurta Set, Bandhgala, Indo-Western
+Western: Shirts (Embroidered/Printed/Cuban), Co-ord Sets, Tuxedo Sets, Formal Suits, Blazers, Jackets, Casual Suits
+Accessories: Embroidered Shoes/Juttis, Embroidered Stoles
 
-export async function POST(request) {
-  try {
-    const { messages, mode, clientProducts } = await request.json();
-    if (!messages?.length) return NextResponse.json({ error: "Messages required" }, { status: 400 });
+## HANDLING PRODUCTS & SALES
+- ALWAYS use search_products when customer asks about products, styles, or sales
+- The search returns REAL products from asukacouture.com with real prices and images
+- If products have onSale:true, highlight it: "Great news — **Product Name** is currently **X% off** at Price (was CompareAtPrice)!"
+- If asked about sales and no sale items found: "I don't see active discounts on those items right now. Check **asukacouture.com** for the latest — sales update frequently! You can also WhatsApp us at +91 9063356542 for exclusive offers."
+- NEVER say "I cannot access products" — the search works with real store data
 
-    const claudeMessages = messages.map(m => ({
-      role: m.role === "bot" ? "assistant" : m.role,
-      content: m.text || m.content,
-    }));
+## STYLE ME MODE
+1. Understand occasion, budget, style preference
+2. The widget automatically searches the live Asuka catalog and shows product cards
+3. Present products with **bold names**, prices, images, and styling tips
+4. Highlight any discounts prominently
+5. Suggest complete looks — kurta + juttis, suit + stole
+6. If products shown don't match the exact color requested, acknowledge it: "We don't have an exact yellow match right now, but these **gold and beige tones** are stunning alternatives that work beautifully for the same occasion"
+7. ALWAYS reference the products that ARE shown — never say "I can't show products" when product cards are visible
+8. If asked about a specific color and products are shown in different colors, suggest similar shades:
+   - Yellow → gold, beige, cream, mustard, champagne
+   - Red → maroon, burgundy, wine, crimson, rust
+   - Blue → navy, royal blue, teal, sapphire, cobalt
+   - Green → emerald, olive, sage, forest, hunter
+   - Pink → dusty rose, blush, salmon, coral, mauve
+   - Purple → plum, wine, aubergine, lavender
+   - White → ivory, cream, off-white, pearl, champagne
+9. If no products at all, suggest browsing asukacouture.com or WhatsApp +91 9063356542
 
-    // Build product context from client-side search
-    let productContext = "";
-    if (clientProducts?.length) {
-      productContext = "\n\n⚠️ CRITICAL: These are the ONLY products being shown to the customer as visual cards. You MUST ONLY mention products from THIS list. Do NOT invent or hallucinate product names that are not in this list.\n\n[PRODUCTS VISIBLE TO CUSTOMER RIGHT NOW]:\n" +
-        clientProducts.map((p, i) =>
-          `${i+1}. "${p.title}" — ${p.price}${p.onSale ? ` (was ${p.compareAtPrice}, ${p.discount}% OFF!)` : ""}`
-        ).join("\n") +
-        "\n\n[RULES]:\n- ONLY reference products from the list above by their EXACT title\n- The customer sees these as cards with images — don't describe what they look like\n- Give styling tips for the products SHOWN, not imaginary products\n- If these don't match what the customer asked for, say 'Here are some pieces from our collection that could work' and explain why\n- Highlight any that are on sale\n- NEVER make up product names that aren't in the list above";
-    }
+## CREATE DESIGN MODE
+1. Gather vision — occasion, garment, color, fabric, embroidery, silhouette
+2. After 1-2 questions max, use generate_design_brief tool
+3. Write VERY detailed image_prompt for photorealistic Indian menswear
+4. After design is generated, suggest WhatsApp consultation for bespoke tailoring
 
-    const modeCtx = mode === "design"
-      ? "\n\nDESIGN MODE. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt for luxury Indian menswear."
-      : `\n\nSTYLE ME MODE. The widget searched asukacouture.com and is showing product cards.${productContext || "\n\nNo products were found for this search. DON'T say 'I can't access the catalog'. Instead say 'I couldn't find an exact match for that — could you try a different garment type like kurta set, sherwani, or bandhgala?' Also suggest WhatsApp +91 9063356542 for personalized help."}\n\nKeep your response concise — 2-3 sentences max since the products are already visible as cards. Don't repeat all product names — just highlight 1-2 standout picks and give a styling tip.`;
+## TONE
+Good: "A black kurta bundi for a Kashmir cocktail — great choice. You'll want silk or velvet for that winter evening. Let me show you what we have."
+Bad: "Certainly! I would be delighted to assist you."`;
 
-    // Remove search_products tool in style mode (widget handles it)
-    const tools = mode === "design" ? TOOLS : TOOLS.filter(t => t.name !== "search_products");
+export const TOOLS = [
+  {
+    name: "search_products",
+    description: "Search Asuka Couture's LIVE website (asukacouture.com). Returns real products with real images, prices, and sale/discount info. Use this whenever customer asks about products, styles, collections, or sales/offers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query matching real products. Examples: 'kurta bundi set', 'sherwani', 'black bandhgala', 'embroidered shirt', 'tuxedo set', 'co-ord set', 'blazer', 'indo western'. Use garment category names." },
+        limit: { type: "number", description: "Products to return (default 4, max 8)." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "generate_design_brief",
+    description: "Create a bespoke design brief with AI image generation. Use when customer wants something custom that doesn't exist in the catalog.",
+    input_schema: {
+      type: "object",
+      properties: {
+        occasion: { type: "string" },
+        garment_type: { type: "string", description: "Specific garment: sherwani, kurta bundi set, kurta set, bandhgala, indo-western, tuxedo, suit, co-ord set, shirt" },
+        color_palette: { type: "string", description: "Specific colors: midnight black, ivory cream, deep maroon, royal navy, dusty rose, champagne gold, emerald green" },
+        fabric: { type: "string", description: "Fabric: raw silk, dupion silk, velvet, brocade, linen, cotton, wool, organza" },
+        embroidery_detail: { type: "string", description: "Embroidery: gold dori work, silver zardozi, thread embroidery, mirror work, sequin, minimal" },
+        silhouette: { type: "string" },
+        additional_notes: { type: "string" },
+        image_prompt: { type: "string", description: "Write a detailed garment description for Asuka Couture's AI image generator. Focus ONLY on describing the GARMENT on the model — the photography style is already handled. Describe: 1) The EXACT garment construction — use proper Indian menswear terminology (sherwani with mandarin collar and front opening, kurta with side slit and nehru collar, bundi vest with V-neck, bandhgala with closed neck). 2) FABRIC texture you can feel — 'rich raw silk with a subtle matte sheen', 'deep-pile crushed velvet', 'handwoven Banarasi brocade with gold metallic jaal'. 3) EXACT embroidery placement — 'intricate gold dori work running along the center panel from collar to hem', 'zardozi peacock motifs clustered on the chest with scattered bootis', 'tonal resham thread work on cuffs and collar border'. 4) COMPLETE outfit — bottom wear ('matching slim-fit churidar' or 'tapered black trousers'), footwear ('hand-embroidered black velvet juttis with gold tilla work' or 'polished black oxford shoes'), accessories ('cream silk pocket square', 'gold pearl brooch on lapel', 'embroidered dupatta draped over shoulder'). 5) FIT details — 'tailored slim fit with structured shoulders', 'relaxed drape with a slight A-line'. Keep it to 2-3 sentences of pure garment description. Example: 'a midnight black raw silk sherwani with intricate gold dori embroidery cascading from the mandarin collar down the center panel, antique gold buttons, paired with a matching black churidar and black velvet juttis with gold tilla work, cream silk pocket square tucked in chest pocket'" },
+      },
+      required: ["occasion", "garment_type", "color_palette", "image_prompt"],
+    },
+  },
+  {
+    name: "get_store_info",
+    description: "Return Asuka store info — locations, hours, WhatsApp, appointment booking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "City (hyderabad, mumbai, ahmedabad, or 'all')" },
+      },
+      required: ["city"],
+    },
+  },
+];
 
-    let response = await client.messages.create({
-      model: "claude-sonnet-4-20250514", max_tokens: 1024,
-      system: STYLIST_SYSTEM_PROMPT + modeCtx, tools, messages: claudeMessages,
-    });
+export const STORE_INFO = {
+  hyderabad: {
+    name: "Asuka Couture — Hyderabad",
+    address: "Shop A, 120, TSG Heights, Road No. 2, Banjara Hills, Hyderabad 500034",
+    hours: "11:00 AM – 9:30 PM (all seven days)",
+    maps: "https://maps.app.goo.gl/nEV8AzH19hFMDpgNA",
+    whatsapp: "+919063356542",
+  },
+  mumbai: {
+    name: "Asuka Couture — Mumbai",
+    address: "Showroom 1-3, Ground Floor, The Designate, Santacruz West, Mumbai 400054",
+    hours: "11:00 AM – 9:30 PM (all seven days)",
+    maps: "https://maps.app.goo.gl/XxKsrqs3pzGzHX8g9",
+    whatsapp: "+919063356542",
+  },
+  ahmedabad: {
+    name: "Asuka Couture — Ahmedabad",
+    address: "Shop 4 & 5, 3rd Eye One Complex, C.G Road, Ahmedabad 380001",
+    hours: "11:00 AM – 9:30 PM (all seven days)",
+    maps: "https://maps.app.goo.gl/BXZEYFERMdDnucyb7",
+    whatsapp: "+919063356542",
+  },
+};
 
-    const toolResults = [];
-    let iterations = 0;
-    while (response.stop_reason === "tool_use" && iterations < 3) {
-      iterations++;
-      const toolUses = response.content.filter(b => b.type === "tool_use");
-      const results = [];
-      for (const tu of toolUses) {
-        const result = await executeTool(tu.name, tu.input);
-        toolResults.push({ tool: tu.name, ...result });
-        results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
-      }
-      response = await client.messages.create({
-        model: "claude-sonnet-4-20250514", max_tokens: 1024,
-        system: STYLIST_SYSTEM_PROMPT + modeCtx, tools,
-        messages: [...claudeMessages, { role: "assistant", content: response.content }, { role: "user", content: results }],
-      });
-    }
-
-    const replyText = response.content.filter(b => b.type === "text").map(b => b.text).join("\n");
-    const res = { reply: replyText, products: clientProducts || [], design: null, stores: null };
-    for (const r of toolResults) {
-      if (r.type === "design_brief") res.design = r.data;
-      if (r.type === "store" || r.type === "stores") res.stores = r.data;
-    }
-    return NextResponse.json(res);
-  } catch (error) {
-    console.error("Chat API error:", error.message);
-    return NextResponse.json({ reply: "I'm having a moment — could you try that again?", products: [], design: null }, { status: 500 });
-  }
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 200, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
-}
+export const WHATSAPP_NUMBER = "919063356542";
