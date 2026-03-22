@@ -73,16 +73,16 @@ export async function POST(request) {
     // Build product context from client-side search
     let productContext = "";
     if (clientProducts?.length) {
-      productContext = "\n\n[THESE REAL PRODUCTS FROM ASUKACOUTURE.COM ARE BEING DISPLAYED AS VISUAL CARDS TO THE CUSTOMER RIGHT NOW]\n" +
-        clientProducts.map(p =>
-          `• ${p.title} — ${p.price}${p.onSale ? ` (was ${p.compareAtPrice}, ${p.discount}% OFF!)` : ""}`
+      productContext = "\n\n⚠️ CRITICAL: These are the ONLY products being shown to the customer as visual cards. You MUST ONLY mention products from THIS list. Do NOT invent or hallucinate product names that are not in this list.\n\n[PRODUCTS VISIBLE TO CUSTOMER RIGHT NOW]:\n" +
+        clientProducts.map((p, i) =>
+          `${i+1}. "${p.title}" — ${p.price}${p.onSale ? ` (was ${p.compareAtPrice}, ${p.discount}% OFF!)` : ""}`
         ).join("\n") +
-        "\n[IMPORTANT: The customer CAN SEE these product cards with images and prices. Reference them by name. If the exact color/style they asked for isn't in these results, acknowledge that and explain why these alternatives are great choices. NEVER say you can't show products — they are already visible to the customer.]";
+        "\n\n[RULES]:\n- ONLY reference products from the list above by their EXACT title\n- The customer sees these as cards with images — don't describe what they look like\n- Give styling tips for the products SHOWN, not imaginary products\n- If these don't match what the customer asked for, say 'Here are some pieces from our collection that could work' and explain why\n- Highlight any that are on sale\n- NEVER make up product names that aren't in the list above";
     }
 
     const modeCtx = mode === "design"
       ? "\n\nDESIGN MODE. Gather vision quickly (1-2 questions max), then use generate_design_brief. Write an extremely detailed image_prompt for luxury Indian menswear."
-      : `\n\nSTYLE ME MODE. The widget searched asukacouture.com and is showing product cards to the customer.${productContext || "\n\nThe search didn't find matching products this time. DON'T say 'I can't access the catalog'. Instead give styling advice for what they asked about and suggest: 'Let me try a different search — could you tell me the garment type you're looking for? Like kurta set, sherwani, or bandhgala?' You can also suggest they WhatsApp +91 9063356542."}\n\nReference products by **bold name** with styling tips. Highlight discounts. Suggest complete looks. If exact color/style wasn't found, suggest similar shades and explain why the shown alternatives work well.`;
+      : `\n\nSTYLE ME MODE. The widget searched asukacouture.com and is showing product cards.${productContext || "\n\nNo products were found for this search. DON'T say 'I can't access the catalog'. Instead say 'I couldn't find an exact match for that — could you try a different garment type like kurta set, sherwani, or bandhgala?' Also suggest WhatsApp +91 9063356542 for personalized help."}\n\nKeep your response concise — 2-3 sentences max since the products are already visible as cards. Don't repeat all product names — just highlight 1-2 standout picks and give a styling tip.`;
 
     // Remove search_products tool in style mode (widget handles it)
     const tools = mode === "design" ? TOOLS : TOOLS.filter(t => t.name !== "search_products");
