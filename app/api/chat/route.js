@@ -18,8 +18,8 @@ async function generateDesignImage(prompt) {
         input: {
           prompt: enhanced,
           aspect_ratio: "3:4",
-          output_format: "webp",
           safety_tolerance: 4,
+          number_of_images: 1,
           allow_fallback_model: true,
         },
       }),
