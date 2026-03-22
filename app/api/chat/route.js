@@ -16,14 +16,19 @@ async function generateDesignImage(prompt) {
     });
     if (!res.ok) { console.error("Replicate error:", res.status); return null; }
     const pred = await res.json();
-    if (pred.output?.[0]) return pred.output[0];
+    // flux-1.1-pro returns output as a string URL, flux-schnell returns an array
     if (typeof pred.output === "string") return pred.output;
+    if (Array.isArray(pred.output) && pred.output[0]) return pred.output[0];
     if (pred.urls?.get) {
       for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 1000));
         const poll = await fetch(pred.urls.get, { headers: { Authorization: `Bearer ${token}` } });
         const p = await poll.json();
-        if (p.status === "succeeded") return p.output?.[0] || (typeof p.output === "string" ? p.output : null);
+        if (p.status === "succeeded") {
+          if (typeof p.output === "string") return p.output;
+          if (Array.isArray(p.output) && p.output[0]) return p.output[0];
+          return null;
+        }
         if (p.status === "failed" || p.status === "canceled") return null;
       }
     }
